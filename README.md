@@ -42,6 +42,16 @@ Environment variables:
 | `MCP_SERVER_PORT` | `8888` | Port the server listens on |
 | `MCP_AUTH_TOKEN` | `test-secret-token` | Authentication token |
 
+## Authentication
+
+All requests must include a Bearer token in the Authorization header:
+
+```bash
+curl -H "Authorization: Bearer test-secret-token" http://localhost:8888/mcp
+```
+
+Requests without a valid token will receive a `401 Unauthorized` response.
+
 ## Docker Support
 
 The server includes `HostRewriteMiddleware` to handle host header validation when running in Docker containers communicating with the host machine.

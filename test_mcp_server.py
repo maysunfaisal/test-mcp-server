@@ -4,10 +4,14 @@ Test MCP Server with tools for testing Lightspeed integration.
 Fixes host header validation for Docker-to-host communication.
 """
 
+import logging
 import os
 import uvicorn
 from datetime import datetime
 from mcp.server.fastmcp import FastMCP
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Configuration
 SERVER_PORT = int(os.environ.get("MCP_SERVER_PORT", "8888"))
@@ -45,6 +49,62 @@ def get_server_info() -> dict:
     }
 
 
+class AuthMiddleware:
+    """
+    ASGI middleware that validates Bearer token authentication.
+    Returns 401 Unauthorized if the token is missing or invalid.
+    """
+
+    def __init__(self, app, token: str):
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers", []))
+            auth_header = headers.get(b"authorization", b"").decode()
+            method = scope.get("method", "?")
+            path = scope.get("path", "?")
+
+            if not auth_header.startswith("Bearer "):
+                logger.warning(f"Auth failed: missing or malformed Bearer token - {method} {path}")
+                response_body = b'{"error": "Unauthorized"}'
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(response_body)).encode()),
+                    ],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": response_body,
+                })
+                return
+
+            if auth_header[7:] != self.token:
+                logger.warning(f"Auth failed: invalid token - {method} {path}")
+                response_body = b'{"error": "Unauthorized"}'
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(response_body)).encode()),
+                    ],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": response_body,
+                })
+                return
+
+            logger.info(f"Auth successful - {method} {path}")
+
+        await self.app(scope, receive, send)
+
+
 class HostRewriteMiddleware:
     """
     ASGI middleware that rewrites the Host header to localhost.
@@ -80,5 +140,6 @@ if __name__ == "__main__":
     # Get the ASGI app and wrap it with our middleware
     app = mcp.streamable_http_app()
     app = HostRewriteMiddleware(app)
+    app = AuthMiddleware(app, AUTH_TOKEN)
 
     uvicorn.run(app, host="0.0.0.0", port=SERVER_PORT)
